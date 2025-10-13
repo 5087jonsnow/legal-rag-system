@@ -1,0 +1,110 @@
+services:
+  # Vector Database - Qdrant
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: legal_rag_qdrant
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - qdrant_storage:/qdrant/storage
+    restart: unless-stopped
+
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: legal_rag_postgres
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: legal_rag
+      POSTGRES_USER: legal_admin
+      POSTGRES_PASSWORD: changeme_in_production
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+    restart: unless-stopped
+
+  # MinIO Object Storage
+  minio:
+    image: minio/minio:latest
+    container_name: legal_rag_minio
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin123
+    volumes:
+      - minio_data:/data
+    command: server /data --console-address ":9001"
+    restart: unless-stopped
+
+  # Redis Cache
+  redis:
+    image: redis:7-alpine
+    container_name: legal_rag_redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    restart: unless-stopped
+
+  # YOUR Custom Backend (without Cognita dependency)
+  backend:
+    build: ./backend
+    container_name: legal_rag_backend
+    ports:
+      - "8001:8001"
+    depends_on:
+      - qdrant
+      - postgres
+      - redis
+      - minio
+    environment:
+      # No Cognita - use direct processing
+      USE_COGNITA_FOR_PARSING: "false"
+      
+      # Database & Storage
+      QDRANT_HOST: qdrant
+      QDRANT_PORT: 6333
+      DATABASE_URL: postgresql://legal_admin:changeme_in_production@postgres:5432/legal_rag
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin123
+      
+      # API Keys
+      GROQ_API_KEY: ${GROQ_API_KEY}
+      COHERE_API_KEY: ${COHERE_API_KEY}
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+    volumes:
+      - ./backend:/app
+      - ./documents:/app/documents
+    restart: unless-stopped
+
+  # Streamlit Frontend
+  frontend:
+    build: ./frontend
+    container_name: legal_rag_frontend
+    ports:
+      - "8501:8501"
+    depends_on:
+      - backend
+    environment:
+      BACKEND_URL: http://backend:8001
+    volumes:
+      - ./frontend:/app
+    restart: unless-stopped
+
+volumes:
+  qdrant_storage:
+  postgres_data:
+  minio_data:
+  redis_data:
+
+networks:
+  default:
+    name: legal_rag_network
