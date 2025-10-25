@@ -1,79 +1,93 @@
-# Core Framework
+# ============================================================
+# LEGAL RAG SYSTEM - BACKEND DEPENDENCIES
+# Day 12: LlamaIndex Migration (SIMPLIFIED - NO CONFLICTS!)
+# Python 3.11+
+# ============================================================
+
+# ============================================================
+# CORE WEB FRAMEWORK (Pin exact versions)
+# ============================================================
 fastapi==0.109.0
 uvicorn[standard]==0.27.0
-pydantic==2.5.3
-pydantic-settings==2.1.0
-httpx==0.26.0  # For Cognita API calls
-
-# Database
-psycopg2-binary==2.9.9
-sqlalchemy==2.0.25
-alembic==1.13.1
-
-# Vector Database
-qdrant-client==1.7.0
-
-# Object Storage
-minio==7.2.3
-
-# Caching
-redis==5.0.1
-hiredis==2.3.2
-
-# Document Processing
-PyMuPDF==1.23.8
-python-docx==1.1.0
-python-pptx==0.6.23
-pytesseract==0.3.10
-pdf2image==1.16.3
-
-# NLP & Embeddings
-sentence-transformers==2.3.1
-transformers==4.37.0
-torch==2.1.2
-spacy==3.7.2
-rank-bm25==0.2.2
-
-# LLM APIs
-openai==1.10.0
-groq==0.4.1
-cohere==4.43
-anthropic==0.8.1
-
-# Retrieval & RAG
-langchain==0.1.4
-langchain-community==0.0.16
-langchain-openai==0.0.5
-
-# Evaluation
-ragas==0.1.1
-datasets==2.16.1
-
-# Utilities
 python-multipart==0.0.6
+httpx==0.26.0
 python-jose[cryptography]==3.3.0
 passlib[bcrypt]==1.7.4
 python-dotenv==1.0.0
-aiofiles==23.2.1
-tqdm==4.66.1
-numpy==1.26.3
-pandas==2.1.4
-scikit-learn==1.4.0
 
-# Monitoring
-prometheus-client==0.19.0
-sentry-sdk==1.40.0
+# ============================================================
+# PYDANTIC (Pin exact versions)
+# ============================================================
+pydantic==2.5.3
+pydantic-settings==2.1.0
 
-# Testing
-pytest==7.4.4
-pytest-asyncio==0.23.3
-pytest-cov==4.1.0
+# ============================================================
+# LLAMAINDEX (Pin these, let dependencies resolve automatically)
+# ============================================================
+llama-index-core==0.10.12
+llama-index==0.10.12
+llama-index-vector-stores-qdrant==0.2.8
+llama-index-llms-groq==0.1.4
+llama-index-embeddings-huggingface==0.2.0
 
-# Development
-black==23.12.1
-flake8==7.0.0
-mypy==1.8.0
-ipython==8.20.0llama-index==0.10.0
-llama-index-vector-stores-qdrant==0.2.0
-llama-index-embeddings-huggingface==0.1.0
-llama-index-llms-groq==0.1.0
+# ============================================================
+# LLM & EMBEDDINGS (Let pip resolve compatible versions)
+# ============================================================
+groq>=0.4.2
+cohere>=4.47
+sentence-transformers>=2.6.1
+torch>=2.1.2
+transformers>=4.37.0
+tokenizers>=0.15.0
+
+# ============================================================
+# VECTOR DATABASE
+# ============================================================
+qdrant-client>=1.7.3
+
+# ============================================================
+# DOCUMENT PROCESSING
+# ============================================================
+PyMuPDF>=1.23.21
+python-docx>=1.1.0
+pypdf>=3.17.4
+pillow>=10.2.0
+
+# ============================================================
+# DATABASE (PostgreSQL)
+# ============================================================
+psycopg2-binary>=2.9.9
+sqlalchemy>=2.0.25
+alembic>=1.13.1
+
+# ============================================================
+# OBJECT STORAGE (MinIO)
+# ============================================================
+minio>=7.2.3
+
+# ============================================================
+# CACHE (Redis)
+# ============================================================
+redis>=5.0.1
+hiredis>=2.3.2
+
+# ============================================================
+# UTILITIES
+# ============================================================
+python-dateutil>=2.8.2
+pytz>=2023.3
+pandas>=2.1.4
+numpy>=1.26.3
+
+# ============================================================
+# MONITORING & LOGGING
+# ============================================================
+sentry-sdk[fastapi]>=1.40.0
+
+# ============================================================
+# SECURITY
+# ============================================================
+cryptography>=42.0.0
+bcrypt>=4.1.2
+
+# =============================

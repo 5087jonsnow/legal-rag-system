@@ -46,11 +46,11 @@ class Settings(BaseSettings):
     REDIS_PASSWORD: Optional[str] = None
     CACHE_TTL: int = 3600  # 1 hour
     
-    # LLM APIs - Load from environment (NO DEFAULTS!)
-    OPENAI_API_KEY: Optional[str] = os.getenv("OPENAI_API_KEY")
-    GROQ_API_KEY: Optional[str] = os.getenv("GROQ_API_KEY")  # FIXED: No hardcoded default
-    COHERE_API_KEY: Optional[str] = os.getenv("COHERE_API_KEY")
-    ANTHROPIC_API_KEY: Optional[str] = os.getenv("ANTHROPIC_API_KEY")
+    # LLM APIs - Load from environment
+    OPENAI_API_KEY: Optional[str] = os.getenv("OPENAI_API_KEY", None)
+   GROQ_API_KEY: Optional[str] = os.getenv("GROQ_API_KEY") 
+    COHERE_API_KEY: Optional[str] = os.getenv("COHERE_API_KEY", None)
+    ANTHROPIC_API_KEY: Optional[str] = os.getenv("ANTHROPIC_API_KEY", None)
     
     # Embedding Model
     EMBEDDING_MODEL_NAME: str = "nlpaueb/legal-bert-base-uncased"

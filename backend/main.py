@@ -29,14 +29,13 @@ app = FastAPI(
 # CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Configure properly in production
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 
-# Request timing middleware
 @app.middleware("http")
 async def add_process_time_header(request: Request, call_next):
     start_time = time.time()
@@ -46,7 +45,6 @@ async def add_process_time_header(request: Request, call_next):
     return response
 
 
-# Global exception handler
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     logger.error(f"Global exception: {exc}", exc_info=True)
@@ -56,10 +54,8 @@ async def global_exception_handler(request: Request, exc: Exception):
     )
 
 
-# Health check
 @app.get("/health")
 async def health_check():
-    """Health check endpoint"""
     return {
         "status": "healthy",
         "version": settings.APP_VERSION,
@@ -67,10 +63,8 @@ async def health_check():
     }
 
 
-# Root endpoint
 @app.get("/")
 async def root():
-    """Root endpoint"""
     return {
         "message": "Legal RAG System API",
         "version": settings.APP_VERSION,
@@ -79,39 +73,16 @@ async def root():
     }
 
 
-# Include routers
-app.include_router(
-    search.router,
-    prefix=f"{settings.API_V1_PREFIX}/search",
-    tags=["Search & Retrieval"]
-)
-
-app.include_router(
-    documents.router,
-    prefix=f"{settings.API_V1_PREFIX}/documents",
-    tags=["Documents"]
-)
-
-app.include_router(
-    upload.router,
-    prefix=f"{settings.API_V1_PREFIX}/upload",
-    tags=["Upload"]
-)
-
-app.include_router(
-    analytics.router,
-    prefix=f"{settings.API_V1_PREFIX}/analytics",
-    tags=["Analytics"]
-)
+app.include_router(search.router, tags=["Search & Retrieval"])
+app.include_router(documents.router, tags=["Documents"])
+app.include_router(upload.router, tags=["Upload"])
+app.include_router(analytics.router, tags=["Analytics"])
 
 
-# Startup event
 @app.on_event("startup")
 async def startup_event():
-    """Initialize services on startup"""
     logger.info("Starting Legal RAG System (Hybrid Mode)...")
     
-    # Check Cognita health
     if settings.USE_COGNITA_FOR_PARSING:
         from app.services.cognita.client import get_cognita_client
         cognita_client = get_cognita_client()
@@ -120,7 +91,6 @@ async def startup_event():
         if is_healthy:
             logger.info("✓ Cognita is running and healthy")
             
-            # Create default collection if needed
             try:
                 collections = await cognita_client.list_collections()
                 if not any(c.get('name') == 'legal_documents' for c in collections):
@@ -131,35 +101,35 @@ async def startup_event():
         else:
             logger.warning("⚠️  Cognita is not responding. Document parsing will use fallback.")
     
-    # Initialize vector database connection (direct access for search)
     from app.services.embedding.vector_store import VectorStore
     vector_store = VectorStore()
     await vector_store.initialize()
-    logger.info("✓ Direct Qdrant connection established (for custom search)")
+    logger.info("✓ Direct Qdrant connection established")
     
-    # Initialize embedding model (for query embeddings)
     from app.services.embedding.embedder import Embedder
     embedder = Embedder()
     await embedder.load_model()
     logger.info(f"✓ Embedding model loaded: {settings.EMBEDDING_MODEL_NAME}")
     
-    # Initialize LLM client
-    from app.services.llm.client import LLMClient
-    llm_client = LLMClient()
-    logger.info(f"✓ LLM client initialized: {settings.DEFAULT_LLM_PROVIDER}")
+    try:
+        from app.services.llamaindex_service import get_llamaindex_rag
+        rag = get_llamaindex_rag()
+        rag.initialize()
+        logger.info("✓ LlamaIndex RAG initialized successfully")
+    except Exception as e:
+        logger.warning(f"⚠️  LlamaIndex initialization failed: {e}")
     
     logger.info("=" * 60)
     logger.info("HYBRID MODE ACTIVE:")
     logger.info("  - Cognita: Document parsing & indexing")
-    logger.info("  - Custom: Legal metadata, search, RAG")
+    logger.info("  - LlamaIndex: AI-powered search & RAG")
+    logger.info("  - Custom: Legal metadata extraction")
     logger.info("=" * 60)
     logger.info("✓ Legal RAG System started successfully!")
 
 
-# Shutdown event
 @app.on_event("shutdown")
 async def shutdown_event():
-    """Cleanup on shutdown"""
     logger.info("Shutting down Legal RAG System...")
 
 
