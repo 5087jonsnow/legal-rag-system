@@ -1,4 +1,4 @@
-from fastapi import APIRouter, UploadFile, File, HTTPException, BackgroundTasks
+from fastapi import APIRouter, UploadFile, File, HTTPException, BackgroundTasks, Depends
 from pydantic import BaseModel
 from typing import Optional
 import shutil
@@ -10,7 +10,9 @@ import logging
 from app.services.document.processor import get_document_processor
 from app.services.embedding.embedder import get_embedder
 from app.services.embedding.vector_store import get_vector_store
+from app.services.corpus.dual_corpus_manager import get_dual_corpus_manager
 from app.core.config import settings
+from app.core.security import get_current_user, get_current_admin_user, User
 
 logger = logging.getLogger(__name__)
 
@@ -29,16 +31,19 @@ async def process_uploaded_document(
     file_path: str,
     document_id: str,
     document_type: str,
+    user_id: str,
+    org_id: str,
+    is_public: bool = False,
     collection_name: str = "legal_documents",
 ):
     """
-    Background task to process uploaded document
-    
-    Direct processing (no Cognita):
+    Background task to process uploaded document with dual corpus routing.
+
+    Processing:
     1. Parse PDF with PyMuPDF
     2. Extract legal metadata
     3. Generate embeddings
-    4. Store in Qdrant
+    4. Route to PUBLIC or PRIVATE corpus based on is_public flag
     """
     try:
         logger.info(f"Processing document {document_id}: {file_path}")
@@ -77,7 +82,9 @@ async def process_uploaded_document(
         
         # Prepare metadata for each chunk
         base_metadata = result.get('metadata', {})
-        chunk_metadatas = []
+
+        # Build documents for dual corpus manager
+        documents = []
         for i, chunk_text in enumerate(chunk_texts):
             metadata = {
                 **base_metadata,
@@ -86,17 +93,38 @@ async def process_uploaded_document(
                 'total_chunks': len(chunk_texts),
                 'document_type': document_type,
             }
-            chunk_metadatas.append(metadata)
-        
-        # Store in vector database
-        vector_store = get_vector_store()
-        chunk_ids = await vector_store.add_documents(
-            embeddings=embeddings,
-            texts=chunk_texts,
-            metadatas=chunk_metadatas,
-        )
-        
+
+            documents.append({
+                'id': f"{document_id}_chunk_{i}",
+                'text': chunk_text,
+                'metadata': metadata
+            })
+
+        # Route to appropriate corpus
+        corpus_manager = get_dual_corpus_manager()
+
+        if is_public:
+            # Add to PUBLIC corpus (admin only)
+            logger.info(f"Adding {len(documents)} chunks to PUBLIC corpus")
+            chunk_ids = await corpus_manager.add_to_public(
+                documents=documents,
+                embeddings=embeddings
+            )
+            corpus_type = "PUBLIC"
+        else:
+            # Add to PRIVATE corpus (user upload)
+            logger.info(f"Adding {len(documents)} chunks to PRIVATE corpus (org={org_id})")
+            chunk_ids = await corpus_manager.add_to_private(
+                documents=documents,
+                embeddings=embeddings,
+                org_id=org_id,
+                user_id=user_id
+            )
+            corpus_type = "PRIVATE"
+
         logger.info(f"✓ Document {document_id} processed successfully")
+        logger.info(f"  - Corpus: {corpus_type}")
+        logger.info(f"  - Organization: {org_id}")
         logger.info(f"  - Citation: {base_metadata.get('citation', 'N/A')}")
         logger.info(f"  - Court: {base_metadata.get('court_name', 'N/A')}")
         logger.info(f"  - Chunks indexed: {len(chunk_ids)}")
@@ -111,19 +139,36 @@ async def upload_document(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     document_type: str = "judgment",
-    collection_name: str = "legal_documents",
-    organization_id: Optional[str] = None,
+    is_public: bool = False,
+    current_user: User = Depends(get_current_user),
 ):
     """
-    Upload and process a legal document
-    
+    Upload and process a legal document to PRIVATE corpus.
+
+    **Authentication Required:** Bearer token in Authorization header
+
     Args:
         file: PDF, DOCX, or TXT file
         document_type: Type of document (judgment, statute, contract)
-        collection_name: Collection name for vector storage
-        organization_id: Organization ID (for multi-tenancy)
+        is_public: If True, add to public corpus (requires admin privileges)
+
+    **Corpus Routing:**
+    - is_public=False (default): Document goes to PRIVATE corpus (org-specific)
+    - is_public=True: Document goes to PUBLIC corpus (requires admin, shared across all users)
+
+    **Returns:**
+    - document_id: Unique identifier
+    - status: Processing status
+    - corpus: Which corpus the document was added to
     """
     try:
+        # Check admin permission for public uploads
+        if is_public and not current_user.is_admin:
+            raise HTTPException(
+                status_code=403,
+                detail="Only admins can upload to public corpus"
+            )
+
         # Validate file extension
         file_ext = Path(file.filename).suffix.lower()
         if file_ext not in settings.ALLOWED_EXTENSIONS:
@@ -131,9 +176,14 @@ async def upload_document(
                 status_code=400,
                 detail=f"File type {file_ext} not supported. Allowed: {settings.ALLOWED_EXTENSIONS}"
             )
-        
+
         # Generate document ID
         document_id = str(uuid.uuid4())
+
+        logger.info(
+            f"Upload initiated: {file.filename} by user={current_user.user_id}, "
+            f"org={current_user.org_id}, is_public={is_public}"
+        )
         
         # Save file
         upload_dir = Path("documents/uploads")
@@ -155,21 +205,29 @@ async def upload_document(
                 detail=f"File too large. Maximum size: {settings.MAX_UPLOAD_SIZE_MB}MB"
             )
         
-        # Process in background
+        # Process in background with user context
         background_tasks.add_task(
             process_uploaded_document,
             str(file_path),
             document_id,
             document_type,
-            collection_name,
+            current_user.user_id,
+            current_user.org_id,
+            is_public,
         )
-        
+
+        corpus_type = "PUBLIC" if is_public else "PRIVATE"
+        message = (
+            f"Document uploaded to {corpus_type} corpus. "
+            f"Processing in background."
+        )
+
         return UploadResponse(
             document_id=document_id,
             filename=file.filename,
             file_size=file_size,
             status="processing",
-            message="Document uploaded. Processing in background."
+            message=message
         )
     
     except HTTPException:
@@ -202,16 +260,26 @@ async def batch_upload(
     background_tasks: BackgroundTasks,
     files: list[UploadFile] = File(...),
     document_type: str = "judgment",
+    is_public: bool = False,
+    current_user: User = Depends(get_current_user),
 ):
-    """Upload multiple documents at once"""
+    """
+    Upload multiple documents at once.
+
+    **Authentication Required:** Bearer token in Authorization header
+
+    All documents will be uploaded to the same corpus (public or private).
+    """
     results = []
-    
+
     for file in files:
         try:
             result = await upload_document(
                 background_tasks=background_tasks,
                 file=file,
                 document_type=document_type,
+                is_public=is_public,
+                current_user=current_user,
             )
             results.append(result)
         except Exception as e:
@@ -221,10 +289,12 @@ async def batch_upload(
                 "status": "failed",
                 "error": str(e)
             })
-    
+
     return {
         "total_files": len(files),
         "successful": sum(1 for r in results if isinstance(r, UploadResponse)),
         "failed": sum(1 for r in results if isinstance(r, dict) and r.get("status") == "failed"),
-        "results": results
+        "results": results,
+        "corpus": "PUBLIC" if is_public else "PRIVATE",
+        "org_id": current_user.org_id
     }
