@@ -1,11 +1,12 @@
 """
-Search API Routes using LlamaIndex
+Search API Routes with Citation Verification and Authentication
 """
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel, Field
 from typing import Dict, Any, List, Optional
 import logging
 from app.services.llamaindex_service import get_llamaindex_rag
+from app.core.security import get_current_user, User
 
 router = APIRouter(prefix="/api/v1/search", tags=["search"])
 logger = logging.getLogger(__name__)
@@ -34,10 +35,15 @@ except Exception as e:
 
 
 @router.post("/query")
-async def search_with_answer(request: SearchRequest) -> Dict[str, Any]:
+async def search_with_answer(
+    request: SearchRequest,
+    current_user: User = Depends(get_current_user)
+) -> Dict[str, Any]:
     """
-    Search legal documents and generate AI answer using LlamaIndex
-    
+    Search legal documents and generate AI answer with citation verification.
+
+    **Authentication Required:** Bearer token in Authorization header
+
     **Example Request:**
 ```json
     {
@@ -45,38 +51,59 @@ async def search_with_answer(request: SearchRequest) -> Dict[str, Any]:
         "top_k": 5
     }
 ```
-    
+
     **Returns:**
     - AI-generated answer
     - Source documents with metadata
     - Relevance scores
+    - **Citation verification report** (NEW!)
+        - Verified/unverified citations
+        - Confidence scores
+        - Risk level assessment
     """
     try:
-        logger.info(f"📝 Query received: '{request.query}' (top_k={request.top_k})")
-        
-        # Use LlamaIndex for search and answer
-        result = await rag.search_and_answer(query=request.query, top_k=request.top_k)
-        
-        # Format response
+        logger.info(
+            f"📝 Query received: '{request.query}' (top_k={request.top_k}, "
+            f"user={current_user.user_id}, org={current_user.org_id})"
+        )
+
+        # Use LlamaIndex for search and answer with verification
+        result = await rag.search_and_answer(
+            query=request.query,
+            top_k=request.top_k,
+            user_id=current_user.user_id,
+            org_id=current_user.org_id,
+            enable_verification=True  # Enable citation verification
+        )
+
+        # Format response with verification
         return {
             "success": True,
             "query": request.query,
             "answer": result.get("answer", ""),
             "sources": result.get("sources", []),
             "source_count": result.get("source_count", 0),
-            "engine": "llamaindex"
+            "engine": "llamaindex",
+            "verification": result.get("verification"),  # NEW: Verification report
+            "user_id": current_user.user_id,  # For audit trail
+            "org_id": current_user.org_id
         }
-        
+
     except Exception as e:
         logger.error(f"Search failed: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.post("/retrieve")
-async def retrieve_only(request: RetrieveRequest) -> Dict[str, Any]:
+async def retrieve_only(
+    request: RetrieveRequest,
+    current_user: User = Depends(get_current_user)
+) -> Dict[str, Any]:
     """
-    Retrieve relevant documents without generating answer (faster)
-    
+    Retrieve relevant documents without generating answer (faster).
+
+    **Authentication Required:** Bearer token in Authorization header
+
     **Example Request:**
 ```json
     {
@@ -84,25 +111,30 @@ async def retrieve_only(request: RetrieveRequest) -> Dict[str, Any]:
         "top_k": 10
     }
 ```
-    
+
     **Use this for:**
     - Document browsing
     - Quick searches
     - Building context for drafting
     """
     try:
-        logger.info(f"🔍 Retrieval query: '{request.query}' (top_k={request.top_k})")
-        
+        logger.info(
+            f"🔍 Retrieval query: '{request.query}' (top_k={request.top_k}, "
+            f"user={current_user.user_id}, org={current_user.org_id})"
+        )
+
         # Retrieve without generating answer
         results = await rag.search_only(query=request.query, top_k=request.top_k)
-        
+
         return {
             "success": True,
             "query": request.query,
             "results": results,
-            "count": len(results)
+            "count": len(results),
+            "user_id": current_user.user_id,
+            "org_id": current_user.org_id
         }
-        
+
     except Exception as e:
         logger.error(f"Retrieval failed: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))

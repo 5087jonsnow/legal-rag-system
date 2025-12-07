@@ -1,10 +1,14 @@
 """
-LlamaIndex RAG Service
-Production RAG using LlamaIndex framework
+LlamaIndex RAG Service with Citation Verification
+Production RAG using LlamaIndex framework + verification
 """
 
 from typing import List, Optional, Dict, Any
 import logging
+
+from app.services.verification.citation_extractor import CitationExtractor
+from app.services.verification.citation_verifier import CitationVerifier
+from app.services.corpus.dual_corpus_manager import DualCorpusManager
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +25,13 @@ class LlamaIndexRAG:
         self._initialized = False
         self.index = None
         self.query_engine = None
+
+        # Citation verification components
+        self.citation_extractor = CitationExtractor()
+        self.citation_verifier = CitationVerifier()
+
+        # Dual corpus manager
+        self.corpus_manager = DualCorpusManager()
     
     def initialize(self):
         """Initialize LlamaIndex (called once on startup)"""
@@ -98,33 +109,40 @@ class LlamaIndexRAG:
             raise
     
     async def search_and_answer(
-        self, 
+        self,
         query: str,
-        top_k: int = 5
+        top_k: int = 5,
+        user_id: Optional[str] = None,
+        org_id: Optional[str] = None,
+        enable_verification: bool = True
     ) -> Dict[str, Any]:
         """
-        Search using LlamaIndex and generate answer
-        
+        Search using LlamaIndex and generate answer with citation verification
+
         Args:
             query: User's legal question
             top_k: Number of source documents to retrieve
-        
+            user_id: User ID (for dual corpus filtering)
+            org_id: Organization ID (for dual corpus filtering)
+            enable_verification: Whether to verify citations
+
         Returns:
-            Dict with answer and sources
+            Dict with answer, sources, and verification report
         """
         # Ensure initialized
         if not self._initialized:
             self.initialize()
-        
+
         try:
-            logger.info(f"🔍 LlamaIndex query: '{query}' (top_k={top_k})")
-            
+            logger.info(f"🔍 LlamaIndex query: '{query}' (top_k={top_k}, user={user_id}, org={org_id})")
+
             # Update similarity_top_k for this query
             self.query_engine.similarity_top_k = top_k
-            
+
             # Query with LlamaIndex
             response = self.query_engine.query(query)
-            
+            answer_text = str(response)
+
             # Extract sources
             sources = []
             for node in response.source_nodes:
@@ -134,18 +152,63 @@ class LlamaIndexRAG:
                     'metadata': node.node.metadata,
                     'doc_id': node.node.id_
                 })
-            
+
+            # CITATION VERIFICATION (NEW!)
+            verification = None
+            if enable_verification:
+                try:
+                    logger.info("🔍 Verifying citations in answer...")
+
+                    # Extract citations from answer
+                    citations = self.citation_extractor.extract_all(answer_text)
+
+                    if citations:
+                        # Verify all citations
+                        verification_report = await self.citation_verifier.verify_all(
+                            citations=citations,
+                            full_text=answer_text
+                        )
+
+                        verification = verification_report.dict()
+
+                        logger.info(
+                            f"✅ Verification complete: {verification_report.verified_count}/"
+                            f"{verification_report.total_citations} citations verified "
+                            f"({verification_report.risk_level})"
+                        )
+                    else:
+                        # No citations found
+                        from app.services.verification.models import VerificationReport, RiskLevel
+                        verification_report = VerificationReport(
+                            score=0.0,
+                            verified_count=0,
+                            total_citations=0,
+                            risk_level=RiskLevel.UNVERIFIED,
+                            details=[],
+                            summary="No citations found in answer"
+                        )
+                        verification = verification_report.dict()
+
+                except Exception as e:
+                    logger.error(f"⚠️ Verification failed: {e}", exc_info=True)
+                    # Don't fail the request if verification fails
+                    verification = {
+                        "error": str(e),
+                        "message": "Citation verification failed"
+                    }
+
             result = {
-                'answer': str(response),
+                'answer': answer_text,
                 'sources': sources,
                 'source_count': len(sources),
                 'query': query,
-                'engine': 'llamaindex'
+                'engine': 'llamaindex',
+                'verification': verification  # NEW: Verification report
             }
-            
-            logger.info(f"✅ Found {len(sources)} sources, generated answer")
+
+            logger.info(f"✅ Found {len(sources)} sources, generated answer with verification")
             return result
-            
+
         except Exception as e:
             logger.error(f"❌ Query failed: {e}", exc_info=True)
             raise
